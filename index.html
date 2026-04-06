@@ -299,7 +299,8 @@
           const canManageDocks = ['Admin'].includes(currentUserRole); 
 
           useEffect(() => {
-              if (!isPowerUser && ['list', 'reports', 'schedule', 'barcode'].includes(activeTab)) {
+              // อนุญาตให้ 'schedule' เข้าได้ทุกคน
+              if (!isPowerUser && ['list', 'reports', 'barcode'].includes(activeTab)) {
                   setActiveTab('dashboard'); 
               }
           }, [currentUserRole, activeTab, isPowerUser]);
@@ -416,6 +417,18 @@
             e.preventDefault();
             if (!isPowerUser) return;
             if (formData.startTime >= formData.endTime) return alert(lang==='th'?'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม':'End time must be after Start time');
+
+            // --- ดักการบันทึกถ้าช่องจอดปิดใช้งาน ---
+            if (formData.allocation !== 'Waitlist') {
+                const selectedDock = docksList.find(d => d.name === formData.allocation);
+                const isCurrentlyAssignedToThisDock = editingId && bookings.find(b => b.id === editingId)?.allocation === formData.allocation;
+                
+                if (selectedDock && selectedDock.status !== 'Available' && !isCurrentlyAssignedToThisDock) {
+                    const statusText = selectedDock.status === 'Busy' ? t('statusBusy') : t('statusMaint');
+                    return alert(lang === 'th' ? `❌ ไม่สามารถจองคิวลง ${selectedDock.name} ได้\nเนื่องจากช่องจอดมีสถานะ: "${statusText}"` : `❌ Cannot assign to ${selectedDock.name}\nbecause its status is: "${statusText}"`);
+                }
+            }
+            // ------------------------------------
 
             const newBookingData = { ...formData, status: formData.allocation === 'Waitlist' ? 'Pending' : 'Pending' };
             let newBookings;
@@ -569,7 +582,7 @@
                     <div className="flex flex-col md:flex-row items-center w-full md:w-auto space-y-3 md:space-y-0 md:space-x-4">
                         <div className="flex space-x-1 overflow-x-auto hide-scrollbar w-full md:w-auto justify-start md:justify-center bg-slate-900 md:bg-slate-800/50 p-1 rounded-full border border-slate-700/50">
                             <TabBtn id="dashboard" label={t('tabDash')} />
-                            <TabBtn id="schedule" label={t('tabSchedule')} hidden={!isPowerUser} />
+                            <TabBtn id="schedule" label={t('tabSchedule')} /> {/* เอาเงื่อนไข hidden ออกเพื่อให้ทุกคนมองเห็น */}
                             <TabBtn id="list" label={t('tabList')} hidden={!isPowerUser} />
                             <TabBtn id="barcode" label={t('tabBarcode')} hidden={!isPowerUser} />
                             <TabBtn id="reports" label={t('tabReports')} hidden={!isPowerUser} />
@@ -635,7 +648,20 @@
                                         <label className="block text-xs font-bold text-indigo-600 mb-1.5 uppercase tracking-wider">{t('bayLabel')}</label>
                                         <select name="allocation" value={formData.allocation} onChange={handleInputChange} className="w-full border border-indigo-200 rounded-xl p-2.5 outline-none bg-indigo-50/50 font-bold text-indigo-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all">
                                             <option value="Waitlist">{t('waitlistOpt')}</option>
-                                            {docksList.map(d => <option key={d.name} value={d.name}>{t('bayOptPrefix')} {d.name}</option>)}
+                                            {docksList.map(d => {
+                                                const isCurrentlyAssignedToThisDock = editingId && bookings.find(b => b.id === editingId)?.allocation === d.name;
+                                                const isDisabled = d.status !== 'Available' && !isCurrentlyAssignedToThisDock;
+                                                
+                                                let statusLabel = '';
+                                                if (d.status === 'Busy') statusLabel = lang === 'th' ? ` (${t('statusBusy')})` : ` (Busy)`;
+                                                if (d.status === 'Maintenance') statusLabel = lang === 'th' ? ` (${t('statusMaint')})` : ` (Maint)`;
+
+                                                return (
+                                                    <option key={d.name} value={d.name} disabled={isDisabled} className={isDisabled ? "text-slate-400" : "text-slate-800"}>
+                                                        {t('bayOptPrefix')} {d.name}{statusLabel}
+                                                    </option>
+                                                )
+                                            })}
                                         </select>
                                     </div>
                                     <div className="pt-4 mt-2 border-t border-slate-100">
@@ -844,9 +870,13 @@
                                                                     'Completed': 'bg-emerald-500 border-emerald-600 text-white'
                                                                 };
                                                                 return (
-                                                                    <div key={booking.id} className={`absolute top-2.5 bottom-2.5 text-[11px] leading-tight rounded-lg shadow-sm flex flex-col justify-center px-3 cursor-pointer overflow-hidden border transition-transform hover:scale-[1.02] hover:shadow-md z-10 ${colors[booking.status]} ${editingId === booking.id ? 'ring-2 ring-offset-2 ring-indigo-400 scale-105 z-30' : ''}`} style={{left: `${l}%`, width: `${w}%`}} onClick={() => handleEdit(booking)} title={`${booking.vendor}\n${booking.startTime} - ${booking.endTime}`}>
-                                                                        <div className="font-bold truncate">{booking.vendor}</div>
-                                                                        <div className="truncate opacity-90 hidden md:block">{booking.startTime} - {booking.endTime}</div>
+                                                                    <div key={booking.id} 
+                                                                         className={`absolute top-2.5 bottom-2.5 text-[11px] leading-tight rounded-lg shadow-sm flex flex-col justify-center px-3 overflow-hidden border transition-transform z-10 ${colors[booking.status]} ${editingId === booking.id ? 'ring-2 ring-offset-2 ring-indigo-400 scale-105 z-30' : ''} ${isPowerUser ? 'cursor-pointer hover:scale-[1.02] hover:shadow-md' : 'cursor-default'}`} 
+                                                                         style={{left: `${l}%`, width: `${w}%`}} 
+                                                                         onClick={() => { if (isPowerUser) handleEdit(booking); }} 
+                                                                         title={`DO/Shipment: ${booking.shipmentNo}\nVendor: ${booking.vendor}\nTime: ${booking.startTime} - ${booking.endTime}`}>
+                                                                        <div className="font-bold truncate">{booking.shipmentNo}</div>
+                                                                        <div className="truncate text-[10px] opacity-90 font-medium hidden md:block">{booking.startTime} - {booking.endTime}</div>
                                                                     </div>
                                                                 )
                                                             })}
