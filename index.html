@@ -113,9 +113,10 @@
                 formTitleAdd: "📝 จองคิว / นัดหมายหน้าท่า",
                 formTitleEdit: "✏️ แก้ไขข้อมูลคิว",
                 dateLabel: "วันที่ และ เวลาเข้า-ออก",
-                doLabel: "งาน (DO No.)",
+                doLabel: "Shipment / DO",
                 vendorLabel: "บริษัท / Vendor",
                 licenseLabel: "ทะเบียนรถ",
+                vehicleLabel: "ขนาดรถ / ประเภท",
                 bayLabel: "การจัดสรรช่องจอด",
                 waitlistOpt: "🅿️ ขอจองคิวรอก่อน (Waitlist)",
                 bayOptPrefix: "📍 ลง",
@@ -124,7 +125,7 @@
                 btnCancel: "ยกเลิกแก้ไข",
                 waitlistTitle: "รายการจองคิว / รอยืนยันหน้าท่า",
                 queuePre: "คิว",
-                emptyWaitlist: "ไม่มีคิวรอในระบบ (Waitlist ว่าง)",
+                emptyWaitlist: "ไม่มีคิวรอในระบบของวันนี้ (Waitlist ว่าง)",
                 btnAssign: "จัดสรรเข้าหน้าท่า",
                 dockBoardTitle: "Live Dock Board",
                 btnManageDock: "จัดการช่องจอด",
@@ -148,7 +149,7 @@
                 btnExport: "ดึง Report (Excel) & ลบข้อมูล",
                 thDate: "วันที่",
                 thJob: "งาน / บริษัท",
-                thLicense: "ทะเบียน",
+                thLicense: "ทะเบียน / ขนาดรถ",
                 thDock: "ช่องจอด",
                 thPlanIn: "Plan เข้า",
                 thPlanOut: "Plan จบ",
@@ -187,9 +188,10 @@
                 formTitleAdd: "📝 Add New Booking",
                 formTitleEdit: "✏️ Edit Booking",
                 dateLabel: "Date & Time In-Out",
-                doLabel: "DO No.",
+                doLabel: "Shipment / DO No.",
                 vendorLabel: "Company / Vendor",
                 licenseLabel: "License Plate",
+                vehicleLabel: "Vehicle Size",
                 bayLabel: "Dock Allocation",
                 waitlistOpt: "🅿️ Waitlist",
                 bayOptPrefix: "📍 Assign to",
@@ -198,7 +200,7 @@
                 btnCancel: "Cancel",
                 waitlistTitle: "Waitlist / Pending Confirmation",
                 queuePre: "Q",
-                emptyWaitlist: "No pending queues (Waitlist is empty)",
+                emptyWaitlist: "No pending queues for today (Waitlist is empty)",
                 btnAssign: "Assign to Dock",
                 dockBoardTitle: "Live Dock Board",
                 btnManageDock: "Manage Docks",
@@ -222,7 +224,7 @@
                 btnExport: "Export Excel & Clear",
                 thDate: "Date",
                 thJob: "DO / Company",
-                thLicense: "License Plate",
+                thLicense: "License / Size",
                 thDock: "Dock",
                 thPlanIn: "Plan In",
                 thPlanOut: "Plan Out",
@@ -275,9 +277,13 @@
           // --- URL Params for TV Mode ---
           const urlParams = new URLSearchParams(window.location.search);
           const isTvMode = urlParams.get('view') === 'tv';
+          const urlDate = urlParams.get('date'); 
 
           const [lang, setLang] = useState('th'); 
           const t = (key) => t_dict[lang][key];   
+
+          // 📅 Global View Date (For Filtering Dash/Schedule/TV)
+          const [viewDate, setViewDate] = useState(urlDate || getTodayStr());
 
           const [bookings, setBookings] = useState(() => {
               try { return localStorage.getItem('smartdock_bookings') ? safeParseArray(JSON.parse(localStorage.getItem('smartdock_bookings'))) : []; } catch(e) { return []; }
@@ -299,13 +305,13 @@
           const [scanResult, setScanResult] = useState({ text: '', isSuccess: false });
           const [isCloudConnected, setIsCloudConnected] = useState(false);
           const [editingId, setEditingId] = useState(null);
-          const [soundEnabled, setSoundEnabled] = useState(false); // Sound Toggle
+          const [soundEnabled, setSoundEnabled] = useState(false); 
           const prevBookingsCount = useRef(0);
           
           const [formData, setFormData] = useState({
             date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', 
-            packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', 
-            jobType: 'IN', // Default to IN
+            packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', // เพิ่ม vehicle default
+            jobType: 'IN', 
             allocation: 'Waitlist'
           });
 
@@ -360,13 +366,13 @@
           // --- Sound Alert System ---
           useEffect(() => {
               if (soundEnabled) {
-                  const currentCount = bookings.filter(b => b.status !== 'Completed').length;
+                  const currentCount = bookings.filter(b => b.status !== 'Completed' && b.date === viewDate).length;
                   if (currentCount > prevBookingsCount.current) {
                       SOUND_NEW_QUEUE.play().catch(e => console.log('Auto-play blocked'));
                   }
                   prevBookingsCount.current = currentCount;
               }
-          }, [bookings, soundEnabled]);
+          }, [bookings, soundEnabled, viewDate]);
 
           useEffect(() => {
             const timer = setInterval(() => {
@@ -374,15 +380,17 @@
                 
                 // Check for delays to play warning sound (only every minute at 00 seconds to avoid spam)
                 if (soundEnabled && new Date().getSeconds() === 0) {
-                    const hasDelay = bookings.some(b => checkDelay(b));
+                    const hasDelay = bookings.some(b => checkDelay(b) && b.date === viewDate);
                     if (hasDelay) SOUND_DELAY.play().catch(e => console.log('Auto-play blocked'));
                 }
             }, 1000);
             return () => clearInterval(timer);
-          }, [bookings, soundEnabled]);
+          }, [bookings, soundEnabled, viewDate]);
 
           const checkDelay = (booking) => {
               if (!booking || booking.status === 'Completed' || booking.status === 'Pending') return false;
+              // ตรวจจับ delay เฉพาะแผนของวันนี้ที่เวลาเลย Plan Out มาแล้ว
+              if (booking.date !== getTodayStr()) return false; 
               const currentHHMM = currentTime.toLocaleTimeString('th-TH', { hour12: false, hour: '2-digit', minute:'2-digit' });
               return currentHHMM > booking.endTime;
           };
@@ -403,9 +411,9 @@
                         let index = -1; let msg = ''; let success = true;
 
                         if (matchedDock) {
-                            index = newBookings.findIndex(b => b.allocation === matchedDock.name && b.status !== 'Completed');
+                            index = newBookings.findIndex(b => b.allocation === matchedDock.name && b.status !== 'Completed' && b.date === getTodayStr());
                             if (index === -1) {
-                                setScanResult({ text: lang==='th'?`ไม่มีคิวงานที่กำลังดำเนินการอยู่ใน ${matchedDock.name}`:`No active booking in ${matchedDock.name}`, isSuccess: false });
+                                setScanResult({ text: lang==='th'?`ไม่มีคิวงานของวันนี้ที่ดำเนินการอยู่ใน ${matchedDock.name}`:`No active booking today in ${matchedDock.name}`, isSuccess: false });
                                 setIsScanning(false); return;
                             }
                         } else {
@@ -473,13 +481,14 @@
             }
             syncBookingsData(newBookings);
             setEditingId(null);
-            setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'IN', allocation: 'Waitlist' });
+            // เมื่อเพิ่มเสร็จ ให้คง Date ไว้ตามที่ user กำลังทำอยู่ เผื่อลงคิววันเดียวกันต่อ
+            setFormData({ date: formData.date, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist' });
             if (window.innerWidth < 768) setActiveTab('dashboard');
           };
 
           const handleEdit = (booking) => {
             if (!isPowerUser) return;
-            setFormData({ ...booking, jobType: booking.jobType || 'IN' }); // fallback for old data
+            setFormData({ ...booking, jobType: booking.jobType || 'IN', vehicle: booking.vehicle || '4WT' }); 
             setEditingId(booking.id);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           };
@@ -536,11 +545,11 @@
               if (completedBookings.length === 0) return alert(lang==='th'?'ไม่มีรายการที่ "เสร็จสิ้น" ให้ดึง Report ครับ':'No completed transactions to export.');
 
               const headers = lang==='th' 
-                ? ['วันที่', 'ช่องจอด', 'งาน/DO', 'IN/OUT', 'บริษัท', 'ทะเบียนรถ', 'Plan เข้า', 'Plan ออก', 'เวลามาดึง', 'เวลาโหลด', 'เวลารอเอกสาร', 'เวลาเสร็จสิ้น']
-                : ['Date', 'Dock', 'DO No.', 'IN/OUT', 'Company', 'License Plate', 'Plan In', 'Plan Out', 'Time Arrived', 'Time Loading', 'Time Wait Doc', 'Time Completed'];
+                ? ['วันที่', 'ช่องจอด', 'Shipment', 'IN/OUT', 'บริษัท', 'ทะเบียนรถ', 'ขนาดรถ', 'Plan เข้า', 'Plan ออก', 'เวลามาดึง', 'เวลาโหลด', 'เวลารอเอกสาร', 'เวลาเสร็จสิ้น']
+                : ['Date', 'Dock', 'DO No.', 'IN/OUT', 'Company', 'License Plate', 'Vehicle', 'Plan In', 'Plan Out', 'Time Arrived', 'Time Loading', 'Time Wait Doc', 'Time Completed'];
                 
               const rows = completedBookings.map(b => [
-                  b.date, b.allocation, b.shipmentNo, b.jobType||'-', b.vendor, b.license, 
+                  b.date, b.allocation, b.shipmentNo, b.jobType||'-', b.vendor, b.license, b.vehicle||'-',
                   b.startTime, b.endTime, 
                   b.timeArrived||'-', b.timeLoading||'-', b.timeWaitingDoc||'-', b.timeCompleted||'-'
               ]);
@@ -574,8 +583,9 @@
               );
           };
 
-          const waitlistBookings = bookings.filter(b => b.allocation === 'Waitlist' && b.status !== 'Completed');
-          const dockBookings = bookings.filter(b => b.allocation !== 'Waitlist' && b.status !== 'Completed');
+          // 📅 Filter Data by `viewDate` (ยกเว้น Tab List และ Reports ที่จะแสดงทั้งหมด)
+          const waitlistBookings = bookings.filter(b => b.allocation === 'Waitlist' && b.status !== 'Completed' && b.date === viewDate);
+          const dockBookings = bookings.filter(b => b.allocation !== 'Waitlist' && b.status !== 'Completed' && b.date === viewDate);
 
           // ==========================================
           // 📺 TV MODE RENDER
@@ -594,7 +604,7 @@
                               <img src="./logo.png" alt="Logo" className="h-14 bg-white rounded-xl p-2 mr-6 hidden md:block" onError={(e) => e.target.style.display='none'} />
                               <div>
                                   <h1 className="text-4xl font-black text-white tracking-tight uppercase">Dock <span className="text-indigo-500">Queue</span></h1>
-                                  <div className="text-slate-400 text-lg mt-1 font-medium">{t('appTitle')}</div>
+                                  <div className="text-slate-400 text-lg mt-1 font-medium">{t('appTitle')} <span className="ml-4 px-3 py-1 bg-slate-800 rounded-lg text-emerald-400">แผนงานวันที่: {viewDate}</span></div>
                               </div>
                           </div>
                           <div className="text-right flex flex-col items-end">
@@ -617,7 +627,7 @@
                                       const b = dock.booking;
                                       
                                       return (
-                                          <div key={dock.name} className={`rounded-2xl border-2 p-5 flex flex-col justify-between h-[200px] tv-row ${b ? 'bg-indigo-900/40 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : isBusy ? 'bg-slate-800/30 border-slate-700 opacity-50' : 'bg-slate-800/50 border-slate-700'}`}>
+                                          <div key={dock.name} className={`rounded-2xl border-2 p-5 flex flex-col justify-between h-[230px] tv-row ${b ? 'bg-indigo-900/40 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : isBusy ? 'bg-slate-800/30 border-slate-700 opacity-50' : 'bg-slate-800/50 border-slate-700'}`}>
                                               <div className="flex justify-between items-start">
                                                   <div className="text-3xl font-black text-slate-100">{dock.name}</div>
                                                   {b && <div className={`text-sm font-bold px-3 py-1 rounded-full ${b.status === 'Arrived' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-sky-500/20 text-sky-400'}`}>{t('statusObj')[b.status]}</div>}
@@ -625,11 +635,16 @@
                                               </div>
                                               
                                               {b ? (
-                                                  <div className="mt-4">
+                                                  <div className="mt-4 flex-1 flex flex-col justify-center">
+                                                      <div className="text-xl text-indigo-300 font-bold mb-1 tracking-wider">{b.shipmentNo}</div>
                                                       <div className="text-5xl font-black text-white mb-2 truncate">{b.license}</div>
-                                                      <div className="text-xl text-indigo-300 flex items-center">
-                                                          <span className="truncate">{b.vendor}</span>
-                                                          <span className={`ml-3 px-2 py-0.5 rounded text-sm font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                                      <div className="text-lg text-slate-400 flex items-center flex-wrap gap-2">
+                                                          <span className="truncate max-w-[200px]">{b.vendor}</span>
+                                                          <span className="bg-slate-700 text-slate-200 px-2 py-0.5 rounded text-sm font-bold border border-slate-600">{b.vehicle}</span>
+                                                          <span className={`px-2 py-0.5 rounded text-sm font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                                      </div>
+                                                      <div className="text-md font-bold text-slate-500 mt-2">
+                                                          <span className="uppercase text-[11px] mr-2 text-slate-600">Plan Time</span> {b.startTime} - {b.endTime}
                                                       </div>
                                                   </div>
                                               ) : (
@@ -653,11 +668,14 @@
                                       <div key={b.id} className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 flex items-center tv-row">
                                           <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-xl font-black text-slate-300 mr-4 shrink-0">{idx + 1}</div>
                                           <div className="flex-1 min-w-0">
-                                              <div className="text-2xl font-black text-white truncate flex items-center">
-                                                  {b.license}
+                                              <div className="text-xl font-black text-white truncate flex items-center">
+                                                  {b.shipmentNo}
+                                                  <span className="ml-3 bg-slate-700 text-slate-200 px-1.5 py-0.5 rounded text-xs font-bold border border-slate-600">{b.vehicle}</span>
                                                   <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
                                               </div>
-                                              <div className="text-slate-400 text-lg truncate">{b.vendor}</div>
+                                              <div className="text-slate-400 text-lg truncate mt-1">
+                                                  <span className="font-bold text-slate-200">{b.license}</span> ({b.vendor})
+                                              </div>
                                           </div>
                                           <div className="text-right ml-2 shrink-0">
                                               <div className="text-sm text-slate-500 uppercase">Plan</div>
@@ -748,11 +766,26 @@
                         </div>
 
                         <div className="flex items-center space-x-3">
+                            {/* 📅 Date Picker สำหรับเลือกวันดูข้อมูล */}
+                            <div className="flex items-center border border-slate-700 rounded-lg bg-slate-800 px-3 py-1.5 shadow-inner">
+                                <span className="text-[11px] text-slate-400 mr-2">📅 {lang==='th'?'แผนวันที่:':'Date:'}</span>
+                                <input type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:filter [&::-webkit-calendar-picker-indicator]:invert" />
+                            </div>
+
                             <button 
                                 onClick={() => setLang(lang === 'th' ? 'en' : 'th')}
                                 className="flex items-center bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 transition-colors"
                             >
-                                {lang === 'th' ? '🇹🇭 TH' : '🇬🇧 EN'}
+                                {lang === 'th' ? '🇹🇭' : '🇬🇧'}
+                            </button>
+
+                            {/* เปิดโหมดทีวี Tab ใหม่ */}
+                            <button 
+                                onClick={() => window.open(window.location.pathname + `?view=tv&date=${viewDate}`, '_blank')}
+                                className="flex items-center bg-indigo-600 hover:bg-indigo-500 border border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white transition-colors"
+                                title="เปิดหน้าโหมด Smart TV แยกอีกแท็บ"
+                            >
+                                🖥️ TV Mode
                             </button>
 
                             <div className="flex items-center border border-slate-700 rounded-lg bg-slate-800 px-3 py-1.5 shadow-inner">
@@ -770,7 +803,7 @@
                     
                     {/* LEFT COLUMN: FORM */}
                     {isPowerUser && activeTab === 'dashboard' && (
-                        <div className="w-full md:w-[340px] shrink-0 flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-auto md:h-full print-hidden flex animate-fade-in">
+                        <div className="w-full md:w-[360px] shrink-0 flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-auto md:h-full print-hidden flex animate-fade-in">
                             <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                                 <h2 className="font-bold text-indigo-900 text-sm">{editingId ? t('formTitleEdit') : t('formTitleAdd')}</h2>
                             </div>
@@ -808,10 +841,20 @@
                                             <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">{t('vendorLabel')}</label>
                                             <input type="text" name="vendor" value={formData.vendor} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all bg-slate-50 focus:bg-white" required />
                                         </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">{t('licenseLabel')}</label>
-                                        <input type="text" name="license" value={formData.license} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all bg-slate-50 focus:bg-white" required />
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">{t('licenseLabel')}</label>
+                                            <input type="text" name="license" value={formData.license} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all bg-slate-50 focus:bg-white" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">{t('vehicleLabel')}</label>
+                                            <select name="vehicle" value={formData.vehicle} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all bg-slate-50 focus:bg-white">
+                                                <option value="40FT">40FT</option>
+                                                <option value="20FT">20FT</option>
+                                                <option value="10WT">10WT (สิบล้อ)</option>
+                                                <option value="6WT">6WT (หกล้อ)</option>
+                                                <option value="4WT">4WT (สี่ล้อ)</option>
+                                            </select>
+                                        </div>
                                     </div>
                                     <div className="pt-2">
                                         <label className="block text-xs font-bold text-indigo-600 mb-1.5 uppercase tracking-wider">{t('bayLabel')}</label>
@@ -833,7 +876,7 @@
                                     </div>
                                     <div className="pt-4 mt-2 border-t border-slate-100">
                                         <button type="submit" className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold text-sm transition-all transform hover:-translate-y-0.5">{editingId ? t('btnSaveEdit') : t('btnSaveAdd')}</button>
-                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'IN', allocation: 'Waitlist' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
+                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: viewDate, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
                                     </div>
                                 </form>
                             </div>
@@ -851,7 +894,7 @@
                                     <div className="p-3.5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-2xl">
                                         <h3 className="font-bold text-slate-800 flex items-center text-sm">
                                             <svg className="w-4 h-4 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
-                                            {t('waitlistTitle')}
+                                            {t('waitlistTitle')} (วันที่ {viewDate})
                                         </h3>
                                         <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold">{waitlistBookings.length}</span>
                                     </div>
@@ -871,7 +914,10 @@
                                                             <button onClick={() => handleEdit(booking)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 shadow-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
                                                         </div>
                                                     )}
-                                                    <div className="font-bold text-slate-800 text-sm flex items-center">{booking.license}</div>
+                                                    <div className="font-bold text-slate-800 text-sm flex items-center">
+                                                        {booking.license} 
+                                                        <span className="ml-2 bg-slate-100 border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">{booking.vehicle}</span>
+                                                    </div>
                                                     <div>{booking.shipmentNo} <span className="text-slate-400">|</span> {booking.vendor}</div>
                                                     <div className="font-semibold text-indigo-600 bg-indigo-50 inline-block px-2 py-0.5 rounded">{booking.startTime} - {booking.endTime}</div>
                                                 </div>
@@ -897,7 +943,7 @@
                                     <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center shrink-0 gap-3 sm:gap-0 bg-white">
                                         <div className="flex items-center">
                                             <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg></div>
-                                            <h2 className="font-bold text-lg text-slate-800 tracking-tight">{t('dockBoardTitle')}</h2>
+                                            <h2 className="font-bold text-lg text-slate-800 tracking-tight">{t('dockBoardTitle')} (วันที่ {viewDate})</h2>
                                             {canManageDocks && (
                                                 <button onClick={() => setIsDockModalOpen(true)} className="ml-4 bg-slate-100 text-slate-600 border border-slate-200 text-[11px] px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-200 font-semibold transition-colors">
                                                     {t('btnManageDock')}
@@ -945,7 +991,7 @@
                                                                 </div>
                                                                 <div className="space-y-1.5 mb-2">
                                                                     <div className="flex"><span className="w-14 text-slate-400">DO:</span><span className="font-bold truncate pr-2 text-slate-800">{activeBooking.shipmentNo}</span></div>
-                                                                    <div className="flex"><span className="w-14 text-slate-400">Truck:</span><span className="font-bold truncate pr-2 text-slate-800">{activeBooking.license} <span className="text-slate-400 font-normal">({activeBooking.vendor})</span></span></div>
+                                                                    <div className="flex"><span className="w-14 text-slate-400">Truck:</span><span className="font-bold truncate pr-2 text-slate-800">{activeBooking.license} <span className="bg-slate-100 border text-slate-500 px-1 rounded text-[10px] ml-1">{activeBooking.vehicle}</span></span></div>
                                                                 </div>
                                                                 <div className="bg-slate-50 rounded-xl p-2.5 mt-auto flex justify-between text-center border border-slate-100">
                                                                     <div className="flex-1 border-r border-slate-200">
@@ -1004,7 +1050,7 @@
                                 <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white shrink-0 gap-3 sm:gap-0">
                                     <h3 className="font-bold text-lg text-slate-800 flex items-center">
                                         <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v12a2 2 0 002 2z"></path></svg></div>
-                                        {t('scheduleTitle')}
+                                        {t('scheduleTitle')} (แผนงาน: {viewDate})
                                     </h3>
                                     <div className="flex flex-wrap gap-3 text-[11px] font-bold text-slate-500 bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
                                         <span className="flex items-center"><span className="w-3 h-3 bg-slate-200 rounded mr-1.5"></span> {t('statusObj')['Pending']}</span>
@@ -1101,15 +1147,15 @@
                             </div>
                         )}
 
-                        {/* VIEW: REPORTS & LIST */}
+                        {/* VIEW: REPORTS & LIST (List = ดูทั้งหมดทุกวันไม่ Filter, Reports = ดูของวันที่เลือกและเสร็จแล้ว) */}
                         {['reports', 'list'].includes(activeTab) && (
                             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex-1 flex flex-col overflow-auto animate-fade-in">
                                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
                                     <h3 className="font-bold text-lg text-slate-800 flex items-center">
                                         {activeTab === 'reports' ? (
-                                            <><div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></div>{t('reportTitle')}</>
+                                            <><div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></div>{t('reportTitle')} (วันที่ {viewDate})</>
                                         ) : (
-                                            <><div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg></div>{t('tabList')}</>
+                                            <><div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center mr-3"><svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg></div>{t('tabList')} (All Dates)</>
                                         )}
                                     </h3>
                                     {activeTab === 'reports' && (
@@ -1139,7 +1185,7 @@
                                                     </tr>
                                                 ) : (
                                                     <tr>
-                                                        <th className="p-4 font-bold">{t('thPlanIn')}</th>
+                                                        <th className="p-4 font-bold">วันที่ & เวลา Plan</th>
                                                         <th className="p-4 font-bold">{t('thJob')}</th>
                                                         <th className="p-4 font-bold">IN/OUT</th>
                                                         <th className="p-4 font-bold">{t('thLicense')}</th>
@@ -1150,14 +1196,18 @@
                                                 )}
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {bookings.filter(b => activeTab === 'reports' ? b.status === 'Completed' : b.status !== 'Completed').sort((a,b) => a.startTime.localeCompare(b.startTime)).map(b => (
+                                                {/* Logic: ถ้าเป็น Reports ให้ดูแค่ Completed และของวันที่เลือก. ถ้าเป็น List ดูทั้งหมดทุกวันที่ยังไม่เสร็จ */}
+                                                {bookings
+                                                    .filter(b => activeTab === 'reports' ? (b.status === 'Completed' && b.date === viewDate) : b.status !== 'Completed')
+                                                    .sort((a,b) => (a.date + a.startTime).localeCompare((b.date + b.startTime)))
+                                                    .map(b => (
                                                     <tr key={b.id} className="hover:bg-slate-50/80 transition-colors">
                                                         {activeTab === 'reports' ? (
                                                             <>
                                                                 <td className="p-4 text-slate-500">{b.date}</td>
                                                                 <td className="p-4 font-bold text-slate-800">{b.shipmentNo} <div className="text-[10px] text-slate-400 font-normal">{b.vendor}</div></td>
                                                                 <td className="p-4"><InOutBadge type={b.jobType} /></td>
-                                                                <td className="p-4 text-slate-600">{b.license}</td>
+                                                                <td className="p-4 font-bold text-slate-600">{b.license} <span className="font-normal text-slate-400 border px-1 rounded ml-1 text-[10px]">{b.vehicle}</span></td>
                                                                 <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
                                                                 <td className="p-4 font-bold text-blue-600 bg-blue-50/30">{b.startTime}</td>
                                                                 <td className="p-4 font-medium text-slate-700">{b.timeArrived || '-'}</td>
@@ -1168,10 +1218,13 @@
                                                             </>
                                                         ) : (
                                                             <>
-                                                                <td className="p-4 font-bold text-indigo-600">{b.startTime} - {b.endTime}</td>
+                                                                <td className="p-4">
+                                                                    <div className="font-bold text-slate-800">{b.date}</div>
+                                                                    <div className="text-xs font-bold text-indigo-600 mt-1">{b.startTime} - {b.endTime}</div>
+                                                                </td>
                                                                 <td className="p-4"><div className="font-bold text-slate-800">{b.shipmentNo}</div><div className="text-xs text-slate-500">{b.vendor}</div></td>
                                                                 <td className="p-4"><InOutBadge type={b.jobType} /></td>
-                                                                <td className="p-4 font-bold text-slate-700">{b.license}</td>
+                                                                <td className="p-4 font-bold text-slate-700">{b.license} <div className="text-[10px] text-slate-400 font-normal mt-1"><span className="border px-1 py-0.5 rounded bg-slate-50">{b.vehicle}</span></div></td>
                                                                 <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
                                                                 <td className="p-4"><StatusBadge booking={b} /></td>
                                                                 <td className="p-4 text-center">
@@ -1184,7 +1237,7 @@
                                                         )}
                                                     </tr>
                                                 ))}
-                                                {bookings.filter(b => activeTab === 'reports' ? b.status === 'Completed' : b.status !== 'Completed').length === 0 && (
+                                                {bookings.filter(b => activeTab === 'reports' ? (b.status === 'Completed' && b.date === viewDate) : b.status !== 'Completed').length === 0 && (
                                                     <tr><td colSpan="11" className="p-12 text-center text-slate-400 font-medium">{t('noData')}</td></tr>
                                                 )}
                                             </tbody>
