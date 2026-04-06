@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Dock & DAS (Pro Version)</title>
+    <title>Smart Dock Management</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -23,7 +23,7 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Prompt:wght@300;400;500;600;700;900&display=swap');
         
         body { 
             background-color: #f8fafc; 
@@ -39,6 +39,10 @@
         .animate-pulse-fast { animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         .animate-fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* TV Mode specific animations */
+        @keyframes slideIn { from { transform: translateX(-20px); opacity: 0;} to { transform: translateX(0); opacity: 1;} }
+        .tv-row { animation: slideIn 0.5s ease-out forwards; }
 
         #html5-qrcode-button-camera-start, #html5-qrcode-button-camera-stop { 
             background-color: #4f46e5; color: white; border: none; padding: 10px 20px; 
@@ -83,6 +87,10 @@
         }
         const db = firebase.database();
 
+        // --- Sound Assets ---
+        const SOUND_NEW_QUEUE = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'); // Notification Ting
+        const SOUND_DELAY = new Audio('https://assets.mixkit.co/active_storage/sfx/2866/2866-preview.mp3'); // Warning Buzzer
+
         // --- Mock Data & Configuration ---
         const getTodayStr = () => new Date().toISOString().split('T')[0];
         const getTimeStr = () => new Date().toLocaleTimeString('th-TH', { hour12: false, hour: '2-digit', minute:'2-digit' });
@@ -92,7 +100,7 @@
         // 🌍 TRANSLATIONS DICTIONARY
         const t_dict = {
             th: {
-                appTitle: "Smart Dock Pro",
+                appTitle: "Smart Dock Management",
                 connecting: "กำลังเชื่อมต่อ...",
                 online: "ออนไลน์",
                 tabDash: "หน้าท่า",
@@ -132,7 +140,7 @@
                 dockBusyTitle: "ไม่ว่าง (แจ้งปิดชั่วคราว)",
                 dockMaintTitle: "ปิดซ่อมบำรุง (Maintenance)",
                 clickToChange: "คลิกเปลี่ยนสถานะ",
-                scheduleTitle: "ตารางเวลาหน้าท่า (DAS Schedule)",
+                scheduleTitle: "ตารางเวลาหน้าท่า (Schedule)",
                 qrTitle: "ระบบป้ายประจำช่องจอด (QR Code สำหรับสแกน)",
                 qrSub: "จุดสแกนอัปเดตสถานะอัตโนมัติ",
                 btnPrint: "พิมพ์ป้าย (Print)",
@@ -166,7 +174,7 @@
                 }
             },
             en: {
-                appTitle: "Smart Dock Pro",
+                appTitle: "Smart Dock Management",
                 connecting: "Connecting...",
                 online: "Online",
                 tabDash: "Dashboard",
@@ -206,7 +214,7 @@
                 dockBusyTitle: "Busy (Temporarily Closed)",
                 dockMaintTitle: "Under Maintenance",
                 clickToChange: "Click to change status",
-                scheduleTitle: "DAS Schedule Timeline",
+                scheduleTitle: "Schedule Timeline",
                 qrTitle: "Dock QR Code Badges",
                 qrSub: "Scan point for auto-status update",
                 btnPrint: "Print Badges",
@@ -261,11 +269,15 @@
             return Object.values(val).filter(item => item !== null);
         };
 
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         function App() {
-          const [lang, setLang] = useState('th'); // Language State
-          const t = (key) => t_dict[lang][key];   // Translation Helper
+          // --- URL Params for TV Mode ---
+          const urlParams = new URLSearchParams(window.location.search);
+          const isTvMode = urlParams.get('view') === 'tv';
+
+          const [lang, setLang] = useState('th'); 
+          const t = (key) => t_dict[lang][key];   
 
           const [bookings, setBookings] = useState(() => {
               try { return localStorage.getItem('smartdock_bookings') ? safeParseArray(JSON.parse(localStorage.getItem('smartdock_bookings'))) : []; } catch(e) { return []; }
@@ -287,8 +299,14 @@
           const [scanResult, setScanResult] = useState({ text: '', isSuccess: false });
           const [isCloudConnected, setIsCloudConnected] = useState(false);
           const [editingId, setEditingId] = useState(null);
+          const [soundEnabled, setSoundEnabled] = useState(false); // Sound Toggle
+          const prevBookingsCount = useRef(0);
+          
           const [formData, setFormData] = useState({
-            date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'รับเข้า (IN)', allocation: 'Waitlist'
+            date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', 
+            packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', 
+            jobType: 'IN', // Default to IN
+            allocation: 'Waitlist'
           });
 
           // Role Permissions
@@ -299,11 +317,10 @@
           const canManageDocks = ['Admin'].includes(currentUserRole); 
 
           useEffect(() => {
-              // อนุญาตให้ 'schedule' เข้าได้ทุกคน
-              if (!isPowerUser && ['list', 'reports', 'barcode'].includes(activeTab)) {
+              if (!isTvMode && !isPowerUser && ['list', 'reports', 'barcode'].includes(activeTab)) {
                   setActiveTab('dashboard'); 
               }
-          }, [currentUserRole, activeTab, isPowerUser]);
+          }, [currentUserRole, activeTab, isPowerUser, isTvMode]);
 
           // Firebase Sync
           const syncBookingsData = (newData) => {
@@ -340,10 +357,29 @@
               return () => { bookingsRef.off(); docksRef.off(); };
           }, []);
 
+          // --- Sound Alert System ---
           useEffect(() => {
-            const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+              if (soundEnabled) {
+                  const currentCount = bookings.filter(b => b.status !== 'Completed').length;
+                  if (currentCount > prevBookingsCount.current) {
+                      SOUND_NEW_QUEUE.play().catch(e => console.log('Auto-play blocked'));
+                  }
+                  prevBookingsCount.current = currentCount;
+              }
+          }, [bookings, soundEnabled]);
+
+          useEffect(() => {
+            const timer = setInterval(() => {
+                setCurrentTime(new Date());
+                
+                // Check for delays to play warning sound (only every minute at 00 seconds to avoid spam)
+                if (soundEnabled && new Date().getSeconds() === 0) {
+                    const hasDelay = bookings.some(b => checkDelay(b));
+                    if (hasDelay) SOUND_DELAY.play().catch(e => console.log('Auto-play blocked'));
+                }
+            }, 1000);
             return () => clearInterval(timer);
-          }, []);
+          }, [bookings, soundEnabled]);
 
           const checkDelay = (booking) => {
               if (!booking || booking.status === 'Completed' || booking.status === 'Pending') return false;
@@ -355,7 +391,7 @@
           useEffect(() => {
             let html5QrCode;
             let isStarted = false;
-            if (activeTab === 'scan' && isScanning) {
+            if (activeTab === 'scan' && isScanning && !isTvMode) {
                 html5QrCode = new Html5Qrcode("reader");
                 html5QrCode.start(
                     { facingMode: "environment" },
@@ -409,7 +445,7 @@
                 });
             }
             return () => { if (html5QrCode && isStarted) html5QrCode.stop().catch(e=>console.log(e)); };
-        }, [isScanning, activeTab, docksList, bookings, lang]); 
+        }, [isScanning, activeTab, docksList, bookings, lang, isTvMode]); 
 
           const handleInputChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -418,7 +454,6 @@
             if (!isPowerUser) return;
             if (formData.startTime >= formData.endTime) return alert(lang==='th'?'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม':'End time must be after Start time');
 
-            // --- ดักการบันทึกถ้าช่องจอดปิดใช้งาน ---
             if (formData.allocation !== 'Waitlist') {
                 const selectedDock = docksList.find(d => d.name === formData.allocation);
                 const isCurrentlyAssignedToThisDock = editingId && bookings.find(b => b.id === editingId)?.allocation === formData.allocation;
@@ -428,7 +463,6 @@
                     return alert(lang === 'th' ? `❌ ไม่สามารถจองคิวลง ${selectedDock.name} ได้\nเนื่องจากช่องจอดมีสถานะ: "${statusText}"` : `❌ Cannot assign to ${selectedDock.name}\nbecause its status is: "${statusText}"`);
                 }
             }
-            // ------------------------------------
 
             const newBookingData = { ...formData, status: formData.allocation === 'Waitlist' ? 'Pending' : 'Pending' };
             let newBookings;
@@ -439,13 +473,13 @@
             }
             syncBookingsData(newBookings);
             setEditingId(null);
-            setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'รับเข้า (IN)', allocation: 'Waitlist' });
+            setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'IN', allocation: 'Waitlist' });
             if (window.innerWidth < 768) setActiveTab('dashboard');
           };
 
           const handleEdit = (booking) => {
             if (!isPowerUser) return;
-            setFormData(booking);
+            setFormData({ ...booking, jobType: booking.jobType || 'IN' }); // fallback for old data
             setEditingId(booking.id);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           };
@@ -502,11 +536,11 @@
               if (completedBookings.length === 0) return alert(lang==='th'?'ไม่มีรายการที่ "เสร็จสิ้น" ให้ดึง Report ครับ':'No completed transactions to export.');
 
               const headers = lang==='th' 
-                ? ['วันที่', 'ช่องจอด', 'งาน/DO', 'บริษัท', 'ทะเบียนรถ', 'Plan เข้า', 'Plan ออก', 'เวลามาดึง', 'เวลาโหลด', 'เวลารอเอกสาร', 'เวลาเสร็จสิ้น']
-                : ['Date', 'Dock', 'DO No.', 'Company', 'License Plate', 'Plan In', 'Plan Out', 'Time Arrived', 'Time Loading', 'Time Wait Doc', 'Time Completed'];
+                ? ['วันที่', 'ช่องจอด', 'งาน/DO', 'IN/OUT', 'บริษัท', 'ทะเบียนรถ', 'Plan เข้า', 'Plan ออก', 'เวลามาดึง', 'เวลาโหลด', 'เวลารอเอกสาร', 'เวลาเสร็จสิ้น']
+                : ['Date', 'Dock', 'DO No.', 'IN/OUT', 'Company', 'License Plate', 'Plan In', 'Plan Out', 'Time Arrived', 'Time Loading', 'Time Wait Doc', 'Time Completed'];
                 
               const rows = completedBookings.map(b => [
-                  b.date, b.allocation, b.shipmentNo, b.vendor, b.license, 
+                  b.date, b.allocation, b.shipmentNo, b.jobType||'-', b.vendor, b.license, 
                   b.startTime, b.endTime, 
                   b.timeArrived||'-', b.timeLoading||'-', b.timeWaitingDoc||'-', b.timeCompleted||'-'
               ]);
@@ -530,10 +564,125 @@
               }, 500);
           };
 
+          // IN/OUT Badge Component
+          const InOutBadge = ({ type }) => {
+              const isOut = type === 'OUT';
+              return (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider uppercase ml-2 ${isOut ? 'bg-orange-100 text-orange-600 border border-orange-200' : 'bg-sky-100 text-sky-600 border border-sky-200'}`}>
+                      {isOut ? 'OUT' : 'IN'}
+                  </span>
+              );
+          };
+
           const waitlistBookings = bookings.filter(b => b.allocation === 'Waitlist' && b.status !== 'Completed');
           const dockBookings = bookings.filter(b => b.allocation !== 'Waitlist' && b.status !== 'Completed');
 
-          // --- Custom Tab Button ---
+          // ==========================================
+          // 📺 TV MODE RENDER
+          // ==========================================
+          if (isTvMode) {
+              const activeDocks = docksList.map(dock => {
+                  const b = dockBookings.find(bk => bk.allocation === dock.name);
+                  return { ...dock, booking: b };
+              });
+
+              return (
+                  <div className="bg-slate-900 text-white h-screen w-screen overflow-hidden flex flex-col font-['Inter']">
+                      {/* TV Header */}
+                      <div className="bg-slate-950 px-8 py-5 flex justify-between items-center border-b border-slate-800 shrink-0 shadow-2xl">
+                          <div className="flex items-center">
+                              <img src="./logo.png" alt="Logo" className="h-14 bg-white rounded-xl p-2 mr-6 hidden md:block" onError={(e) => e.target.style.display='none'} />
+                              <div>
+                                  <h1 className="text-4xl font-black text-white tracking-tight uppercase">Dock <span className="text-indigo-500">Queue</span></h1>
+                                  <div className="text-slate-400 text-lg mt-1 font-medium">{t('appTitle')}</div>
+                              </div>
+                          </div>
+                          <div className="text-right flex flex-col items-end">
+                              <div className="text-5xl font-black text-emerald-400 tracking-tighter tabular-nums">{currentTime.toLocaleTimeString('th-TH', { hour12: false })}</div>
+                              <div className="text-slate-400 text-lg mt-1">{currentTime.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                          </div>
+                      </div>
+
+                      {/* TV Body */}
+                      <div className="flex-1 flex overflow-hidden">
+                          
+                          {/* Left: Calling Docks */}
+                          <div className="w-2/3 flex flex-col border-r border-slate-800 relative bg-slate-900">
+                              <div className="bg-slate-800/50 py-3 text-center border-b border-slate-800">
+                                  <h2 className="text-2xl font-bold text-slate-300 uppercase tracking-widest">Live Dock Board</h2>
+                              </div>
+                              <div className="flex-1 overflow-y-auto dock-scroll p-6 grid grid-cols-2 gap-6 content-start">
+                                  {activeDocks.map(dock => {
+                                      const isBusy = dock.status === 'Busy' || dock.status === 'Maintenance';
+                                      const b = dock.booking;
+                                      
+                                      return (
+                                          <div key={dock.name} className={`rounded-2xl border-2 p-5 flex flex-col justify-between h-[200px] tv-row ${b ? 'bg-indigo-900/40 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : isBusy ? 'bg-slate-800/30 border-slate-700 opacity-50' : 'bg-slate-800/50 border-slate-700'}`}>
+                                              <div className="flex justify-between items-start">
+                                                  <div className="text-3xl font-black text-slate-100">{dock.name}</div>
+                                                  {b && <div className={`text-sm font-bold px-3 py-1 rounded-full ${b.status === 'Arrived' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-sky-500/20 text-sky-400'}`}>{t('statusObj')[b.status]}</div>}
+                                                  {!b && <div className="text-slate-500 font-bold uppercase">{isBusy ? 'Closed' : 'Empty'}</div>}
+                                              </div>
+                                              
+                                              {b ? (
+                                                  <div className="mt-4">
+                                                      <div className="text-5xl font-black text-white mb-2 truncate">{b.license}</div>
+                                                      <div className="text-xl text-indigo-300 flex items-center">
+                                                          <span className="truncate">{b.vendor}</span>
+                                                          <span className={`ml-3 px-2 py-0.5 rounded text-sm font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                                      </div>
+                                                  </div>
+                                              ) : (
+                                                  <div className="flex-1 flex items-center justify-center">
+                                                      <span className="text-2xl text-slate-600 font-medium">{t('statusAvail')}</span>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </div>
+
+                          {/* Right: Waitlist */}
+                          <div className="w-1/3 flex flex-col bg-slate-950">
+                              <div className="bg-amber-500/10 py-3 text-center border-b border-amber-500/20">
+                                  <h2 className="text-2xl font-bold text-amber-400 uppercase tracking-widest">Waitlist ({waitlistBookings.length})</h2>
+                              </div>
+                              <div className="flex-1 overflow-y-auto dock-scroll p-6 space-y-4">
+                                  {waitlistBookings.map((b, idx) => (
+                                      <div key={b.id} className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 flex items-center tv-row">
+                                          <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-xl font-black text-slate-300 mr-4 shrink-0">{idx + 1}</div>
+                                          <div className="flex-1 min-w-0">
+                                              <div className="text-2xl font-black text-white truncate flex items-center">
+                                                  {b.license}
+                                                  <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                              </div>
+                                              <div className="text-slate-400 text-lg truncate">{b.vendor}</div>
+                                          </div>
+                                          <div className="text-right ml-2 shrink-0">
+                                              <div className="text-sm text-slate-500 uppercase">Plan</div>
+                                              <div className="text-lg font-bold text-amber-400">{b.startTime}</div>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {waitlistBookings.length === 0 && (
+                                      <div className="h-full flex flex-col items-center justify-center opacity-30">
+                                          <svg className="w-24 h-24 text-slate-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                                          <div className="text-xl text-slate-500 font-bold">{t('emptyWaitlist')}</div>
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              );
+          }
+          // ==========================================
+          // END TV MODE
+          // ==========================================
+
+
+          // --- Normal App Render ---
           const TabBtn = ({ id, label, iconClass, hidden }) => {
               if (hidden) return null;
               const isActive = activeTab === id;
@@ -567,11 +716,20 @@
                 <header className="bg-slate-900 text-white flex flex-col md:flex-row items-center justify-between px-6 py-3 shrink-0 shadow-lg z-10 print-hidden border-b border-slate-800">
                     <div className="flex items-center justify-between w-full md:w-auto mb-3 md:mb-0">
                         <div className="flex items-center">
-                            {/* รูปโลโก้ */}
-                            <img src="./logo.png" alt="Smart Dock Logo" className="w-10 h-10 object-contain mr-3 bg-white rounded-lg p-1 shadow-sm" />
+                            <img src="./logo.png" alt="Smart Dock Logo" className="w-10 h-10 object-contain mr-3 bg-white rounded-lg p-1 shadow-sm" onError={(e) => e.target.style.display='none'} />
                             <div>
-                                <h1 className="font-bold text-lg leading-tight tracking-wide">{t('appTitle')}</h1>
-                                <div className="text-[11px] text-slate-400 flex items-center">
+                                <h1 className="font-bold text-lg leading-tight tracking-wide flex items-center">
+                                    {t('appTitle')}
+                                    {/* 🔊 Sound Toggle Button */}
+                                    <button 
+                                        onClick={() => setSoundEnabled(!soundEnabled)} 
+                                        className={`ml-3 px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors border ${soundEnabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50' : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'}`}
+                                        title={soundEnabled ? 'ปิดเสียงแจ้งเตือน' : 'เปิดเสียงแจ้งเตือน'}
+                                    >
+                                        {soundEnabled ? '🔊 Sound ON' : '🔈 Sound OFF'}
+                                    </button>
+                                </h1>
+                                <div className="text-[11px] text-slate-400 flex items-center mt-0.5">
                                     <span className={`w-2 h-2 rounded-full inline-block mr-1.5 ${isCloudConnected ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-amber-400 animate-pulse'}`}></span>
                                     Firebase {isCloudConnected ? t('online') : t('connecting')}
                                 </div>
@@ -582,7 +740,7 @@
                     <div className="flex flex-col md:flex-row items-center w-full md:w-auto space-y-3 md:space-y-0 md:space-x-4">
                         <div className="flex space-x-1 overflow-x-auto hide-scrollbar w-full md:w-auto justify-start md:justify-center bg-slate-900 md:bg-slate-800/50 p-1 rounded-full border border-slate-700/50">
                             <TabBtn id="dashboard" label={t('tabDash')} />
-                            <TabBtn id="schedule" label={t('tabSchedule')} /> {/* เอาเงื่อนไข hidden ออกเพื่อให้ทุกคนมองเห็น */}
+                            <TabBtn id="schedule" label={t('tabSchedule')} /> 
                             <TabBtn id="list" label={t('tabList')} hidden={!isPowerUser} />
                             <TabBtn id="barcode" label={t('tabBarcode')} hidden={!isPowerUser} />
                             <TabBtn id="reports" label={t('tabReports')} hidden={!isPowerUser} />
@@ -590,7 +748,6 @@
                         </div>
 
                         <div className="flex items-center space-x-3">
-                            {/* Language Toggle */}
                             <button 
                                 onClick={() => setLang(lang === 'th' ? 'en' : 'th')}
                                 className="flex items-center bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 transition-colors"
@@ -598,7 +755,6 @@
                                 {lang === 'th' ? '🇹🇭 TH' : '🇬🇧 EN'}
                             </button>
 
-                            {/* Role Switcher */}
                             <div className="flex items-center border border-slate-700 rounded-lg bg-slate-800 px-3 py-1.5 shadow-inner">
                                 <span className="text-[11px] text-slate-400 mr-2">{t('roleLabel')}</span>
                                 <select value={currentUserRole} onChange={e => setCurrentUserRole(e.target.value)} className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer">
@@ -615,12 +771,25 @@
                     {/* LEFT COLUMN: FORM */}
                     {isPowerUser && activeTab === 'dashboard' && (
                         <div className="w-full md:w-[340px] shrink-0 flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-auto md:h-full print-hidden flex animate-fade-in">
-                            <div className="p-4 border-b border-slate-100 flex items-center bg-slate-50/50">
+                            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                                 <h2 className="font-bold text-indigo-900 text-sm">{editingId ? t('formTitleEdit') : t('formTitleAdd')}</h2>
                             </div>
                             
                             <div className="p-5 flex-1 md:overflow-y-auto dock-scroll text-sm bg-white">
                                 <form onSubmit={handleSubmit} className="space-y-4">
+                                    
+                                    {/* IN / OUT Selector */}
+                                    <div className="bg-slate-100 p-1 rounded-xl flex font-bold text-sm border border-slate-200">
+                                        <label className={`flex-1 text-center py-2 rounded-lg cursor-pointer transition-all ${formData.jobType === 'IN' ? 'bg-white text-sky-600 shadow-sm border border-sky-100' : 'text-slate-500 hover:text-slate-700'}`}>
+                                            <input type="radio" name="jobType" value="IN" checked={formData.jobType === 'IN'} onChange={handleInputChange} className="hidden" />
+                                            📥 รับเข้า (IN)
+                                        </label>
+                                        <label className={`flex-1 text-center py-2 rounded-lg cursor-pointer transition-all ${formData.jobType === 'OUT' ? 'bg-white text-orange-600 shadow-sm border border-orange-100' : 'text-slate-500 hover:text-slate-700'}`}>
+                                            <input type="radio" name="jobType" value="OUT" checked={formData.jobType === 'OUT'} onChange={handleInputChange} className="hidden" />
+                                            📤 จ่ายออก (OUT)
+                                        </label>
+                                    </div>
+
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">{t('dateLabel')}</label>
                                         <input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 mb-2 bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all" required />
@@ -651,11 +820,9 @@
                                             {docksList.map(d => {
                                                 const isCurrentlyAssignedToThisDock = editingId && bookings.find(b => b.id === editingId)?.allocation === d.name;
                                                 const isDisabled = d.status !== 'Available' && !isCurrentlyAssignedToThisDock;
-                                                
                                                 let statusLabel = '';
                                                 if (d.status === 'Busy') statusLabel = lang === 'th' ? ` (${t('statusBusy')})` : ` (Busy)`;
                                                 if (d.status === 'Maintenance') statusLabel = lang === 'th' ? ` (${t('statusMaint')})` : ` (Maint)`;
-
                                                 return (
                                                     <option key={d.name} value={d.name} disabled={isDisabled} className={isDisabled ? "text-slate-400" : "text-slate-800"}>
                                                         {t('bayOptPrefix')} {d.name}{statusLabel}
@@ -666,7 +833,7 @@
                                     </div>
                                     <div className="pt-4 mt-2 border-t border-slate-100">
                                         <button type="submit" className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold text-sm transition-all transform hover:-translate-y-0.5">{editingId ? t('btnSaveEdit') : t('btnSaveAdd')}</button>
-                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'รับเข้า (IN)', allocation: 'Waitlist' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
+                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: 'รถ 4 ล้อ', jobType: 'IN', allocation: 'Waitlist' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
                                     </div>
                                 </form>
                             </div>
@@ -692,7 +859,10 @@
                                         {waitlistBookings.map((booking, idx) => (
                                             <div key={booking.id} className="w-[260px] shrink-0 border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col bg-white snap-center hover:border-indigo-300 hover:shadow-md transition-all group">
                                                 <div className="px-3 py-2 bg-slate-50 flex justify-between items-center border-b border-slate-100">
-                                                    <span className="font-bold text-slate-700 text-sm">{t('queuePre')}{idx + 1}</span>
+                                                    <span className="font-bold text-slate-700 text-sm flex items-center">
+                                                        {t('queuePre')}{idx + 1}
+                                                        <InOutBadge type={booking.jobType} />
+                                                    </span>
                                                     <StatusBadge booking={booking} />
                                                 </div>
                                                 <div className="p-3 flex-1 text-xs text-slate-600 space-y-1.5 relative">
@@ -706,9 +876,15 @@
                                                     <div className="font-semibold text-indigo-600 bg-indigo-50 inline-block px-2 py-0.5 rounded">{booking.startTime} - {booking.endTime}</div>
                                                 </div>
                                                 {isPowerUser && (
-                                                    <button onClick={() => handleEdit(booking)} className="w-full py-2.5 bg-slate-50 text-indigo-600 text-xs font-bold hover:bg-indigo-50 transition-colors border-t border-slate-100 flex justify-center items-center">
-                                                        {t('btnAssign')}
-                                                    </button>
+                                                    <div className="flex border-t border-slate-100">
+                                                        <button onClick={() => handleEdit(booking)} className="flex-1 py-2.5 bg-slate-50 text-indigo-600 text-xs font-bold hover:bg-indigo-50 transition-colors flex justify-center items-center">
+                                                            {t('btnAssign')}
+                                                        </button>
+                                                        {/* ปุ่มแจ้ง LINE (Simulation) */}
+                                                        <a href={`https://line.me/R/msg/text/?คิวของคุณมาถึงแล้ว!%0Aทะเบียน:%20${booking.license}%0Aให้เตรียมนำรถเข้าเทียบท่าได้เลยครับ`} target="_blank" className="px-3 py-2.5 bg-green-50 text-green-600 hover:bg-green-100 flex items-center justify-center transition-colors border-l border-slate-100" title="แชร์ลง LINE">
+                                                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M24 10.304c0-5.369-5.383-9.738-12-9.738-6.616 0-12 4.369-12 9.738 0 4.814 3.54 8.793 8.318 9.579.324.068.756.216.864.512.098.268.049.683.023.953l-.155.932c-.04.226-.188.948.831.517 1.02-.43 5.485-3.23 7.545-5.568C22.618 15.013 24 12.83 24 10.304z"/></svg>
+                                                        </a>
+                                                    </div>
                                                 )}
                                             </div>
                                         ))}
@@ -758,6 +934,7 @@
                                                                 <span className="flex items-center">
                                                                     <div className="w-6 h-6 rounded bg-indigo-100 text-indigo-600 flex items-center justify-center mr-2"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg></div>
                                                                     {dock.name}
+                                                                    <InOutBadge type={activeBooking.jobType} />
                                                                 </span>
                                                             </div>
 
@@ -875,7 +1052,9 @@
                                                                          style={{left: `${l}%`, width: `${w}%`}} 
                                                                          onClick={() => { if (isPowerUser) handleEdit(booking); }} 
                                                                          title={`DO/Shipment: ${booking.shipmentNo}\nVendor: ${booking.vendor}\nTime: ${booking.startTime} - ${booking.endTime}`}>
-                                                                        <div className="font-bold truncate">{booking.shipmentNo}</div>
+                                                                        <div className="font-bold truncate">
+                                                                            {booking.jobType === 'OUT' ? '📤' : '📥'} {booking.shipmentNo}
+                                                                        </div>
                                                                         <div className="truncate text-[10px] opacity-90 font-medium hidden md:block">{booking.startTime} - {booking.endTime}</div>
                                                                     </div>
                                                                 )
@@ -948,6 +1127,7 @@
                                                     <tr>
                                                         <th className="p-4 font-bold">{t('thDate')}</th>
                                                         <th className="p-4 font-bold">{t('thJob')}</th>
+                                                        <th className="p-4 font-bold">IN/OUT</th>
                                                         <th className="p-4 font-bold">{t('thLicense')}</th>
                                                         <th className="p-4 font-bold">{t('thDock')}</th>
                                                         <th className="p-4 font-bold bg-blue-50/50 text-blue-700">{t('thPlanIn')}</th>
@@ -961,6 +1141,7 @@
                                                     <tr>
                                                         <th className="p-4 font-bold">{t('thPlanIn')}</th>
                                                         <th className="p-4 font-bold">{t('thJob')}</th>
+                                                        <th className="p-4 font-bold">IN/OUT</th>
                                                         <th className="p-4 font-bold">{t('thLicense')}</th>
                                                         <th className="p-4 font-bold">{t('thDock')}</th>
                                                         <th className="p-4 font-bold">Status</th>
@@ -975,6 +1156,7 @@
                                                             <>
                                                                 <td className="p-4 text-slate-500">{b.date}</td>
                                                                 <td className="p-4 font-bold text-slate-800">{b.shipmentNo} <div className="text-[10px] text-slate-400 font-normal">{b.vendor}</div></td>
+                                                                <td className="p-4"><InOutBadge type={b.jobType} /></td>
                                                                 <td className="p-4 text-slate-600">{b.license}</td>
                                                                 <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
                                                                 <td className="p-4 font-bold text-blue-600 bg-blue-50/30">{b.startTime}</td>
@@ -988,6 +1170,7 @@
                                                             <>
                                                                 <td className="p-4 font-bold text-indigo-600">{b.startTime} - {b.endTime}</td>
                                                                 <td className="p-4"><div className="font-bold text-slate-800">{b.shipmentNo}</div><div className="text-xs text-slate-500">{b.vendor}</div></td>
+                                                                <td className="p-4"><InOutBadge type={b.jobType} /></td>
                                                                 <td className="p-4 font-bold text-slate-700">{b.license}</td>
                                                                 <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
                                                                 <td className="p-4"><StatusBadge booking={b} /></td>
@@ -1002,7 +1185,7 @@
                                                     </tr>
                                                 ))}
                                                 {bookings.filter(b => activeTab === 'reports' ? b.status === 'Completed' : b.status !== 'Completed').length === 0 && (
-                                                    <tr><td colSpan="10" className="p-12 text-center text-slate-400 font-medium">{t('noData')}</td></tr>
+                                                    <tr><td colSpan="11" className="p-12 text-center text-slate-400 font-medium">{t('noData')}</td></tr>
                                                 )}
                                             </tbody>
                                         </table>
