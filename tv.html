@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Dock - TV Display</title>
+    
+    <!-- Firebase SDK (Vanilla - แบบเก่าเพื่อให้รองรับทีวีทุกรุ่น) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+</head>
+<!-- บังคับพื้นหลังสีดำ ตัวหนังสือสีขาว ฟอนต์พื้นฐาน และซ่อน scrollbar นอกสุด -->
+<body bgcolor="#050505" text="#FFFFFF" style="font-family: Tahoma, Arial, sans-serif; margin: 0; padding: 0; overflow: hidden;">
+
+    <!-- ส่วนที่ 1: HEADER (อยู่คงที่ด้านบน) -->
+    <table width="100%" border="0" cellpadding="15" cellspacing="0" bgcolor="#111111" style="border-bottom: 2px solid #333333; height: 10vh;">
+        <tr>
+            <td align="left" valign="middle">
+                <font size="6"><b>DOCK <font color="#6366f1">QUEUE</font></b></font><br>
+                <font size="4" color="#aaaaaa"><span id="date-badge">กำลังโหลดข้อมูล...</span></font>
+            </td>
+            <td align="right" valign="middle">
+                <font size="7" color="#34d399"><b id="clock">00:00:00</b></font><br>
+                <font size="4" color="#aaaaaa"><span id="clock-date">...</span></font>
+            </td>
+        </tr>
+    </table>
+
+    <!-- ส่วนที่ 2: เนื้อหาหลัก แบ่งซ้าย-ขวา -->
+    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="height: 90vh;">
+        <tr>
+            <!-- ================= ฝั่งซ้าย: WAITLIST ================= -->
+            <td width="45%" valign="top" style="border-right: 3px solid #333333; padding: 15px;">
+                <!-- หัวข้อ Waitlist -->
+                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#332200" style="border: 2px solid #fbbf24; margin-bottom: 10px;">
+                    <tr><td align="center"><font size="5" color="#fbbf24"><b id="waitlist-title">WAITLIST (0)</b></font></td></tr>
+                </table>
+
+                <!-- คอนเทนเนอร์แสดงคิวรอ (Scroll อัตโนมัติ) -->
+                <div id="tv-waitlist" style="height: 75vh; overflow-y: auto; overflow-x: hidden;">
+                    <center><br><font size="5" color="#666666">กำลังดึงข้อมูลคิวรอ...</font><br></center>
+                </div>
+            </td>
+
+            <!-- ================= ฝั่งขวา: LIVE DOCK BOARD ================= -->
+            <td width="55%" valign="top" style="padding: 15px;">
+                <!-- หัวข้อ Live Dock -->
+                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#1a1a2e" style="border: 2px solid #4f46e5; margin-bottom: 10px;">
+                    <tr><td align="center"><font size="5" color="#a5b4fc"><b>LIVE DOCK BOARD (สถานะหน้าท่า 1-9)</b></font></td></tr>
+                </table>
+
+                <!-- คอนเทนเนอร์แสดงช่องจอด (Scroll อัตโนมัติ) -->
+                <div id="docks-container" style="height: 75vh; overflow-y: auto; overflow-x: hidden;">
+                    <center><br><font size="5" color="#666666">กำลังเชื่อมต่อฐานข้อมูล...</font><br></center>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <script>
+        // ==========================================
+        // เขียนโค้ดแบบ ES5 ล้วน เพื่อให้ทีวีอ่านออก
+        // ==========================================
+        var firebaseConfig = {
+            apiKey: "AIzaSyAgzFMPfI0FnH2PDl4xh3YjXfKJEwDESMU",
+            authDomain: "cevaraposdm-16427.firebaseapp.com",
+            projectId: "cevaraposdm-16427",
+            storageBucket: "cevaraposdm-16427.firebasestorage.app",
+            messagingSenderId: "406660740719",
+            appId: "1:406660740719:web:dd12b8a730c32f57c03f9a",
+            databaseURL: "https://cevaraposdm-16427-default-rtdb.asia-southeast1.firebasedatabase.app"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        var db = firebase.database();
+
+        // Data States
+        var bookings = [];
+        var docksList = [];
+        
+        // การดึงวันที่แบบย้อนยุค
+        var targetDate = new Date().toISOString().split('T')[0];
+        var query = window.location.search.substring(1);
+        var vars = query.split("&");
+        for (var i = 0; i < vars.length; i++) {
+            var pair = vars[i].split("=");
+            if (pair[0] == "date") {
+                targetDate = pair[1];
+            }
+        }
+
+        var statusMap = { 'Pending': 'รอเข้าท่า', 'Arrived': 'รถมาถึง', 'Loading': 'กำลังโหลด', 'WaitingDoc': 'รอเอกสาร' };
+
+        // Update Clock
+        setInterval(function() {
+            var now = new Date();
+            var h = now.getHours(); var m = now.getMinutes(); var s = now.getSeconds();
+            if(h < 10) h = "0" + h; if(m < 10) m = "0" + m; if(s < 10) s = "0" + s;
+            
+            document.getElementById('clock').innerHTML = h + ":" + m + ":" + s;
+            var days = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+            document.getElementById('clock-date').innerHTML = "วัน" + days[now.getDay()] + "ที่ " + now.getDate() + "/" + (now.getMonth() + 1) + "/" + now.getFullYear();
+            document.getElementById('date-badge').innerHTML = "📅 แผนงาน: " + targetDate;
+        }, 1000);
+
+        // Fetch Data from Firebase
+        db.ref('smartdock/docks').on('value', function(snapshot) {
+            if(snapshot.exists()) {
+                var data = snapshot.val();
+                docksList = [];
+                for(var j = 0; j < data.length; j++) {
+                    if(data[j] !== null) {
+                        if(typeof data[j] === 'string') {
+                            docksList.push({ name: data[j], status: 'Available' });
+                        } else {
+                            docksList.push(data[j]);
+                        }
+                    }
+                }
+                renderUI();
+            }
+        });
+
+        db.ref('smartdock/bookings').on('value', function(snapshot) {
+            if(snapshot.exists()) {
+                var data = snapshot.val();
+                bookings = [];
+                for(var k = 0; k < data.length; k++) {
+                    if(data[k] !== null && data[k].status !== 'Completed' && data[k].date === targetDate) {
+                        bookings.push(data[k]);
+                    }
+                }
+                renderUI();
+            }
+        });
+
+        // Render Function
+        function renderUI() {
+            if(docksList.length === 0) return;
+
+            // ================== ฝั่งขวา: Docks Board ==================
+            var docksHTML = '<table width="100%" border="1" cellpadding="15" cellspacing="0" bordercolor="#333333" style="border-collapse: collapse;">';
+            // หัวตาราง Docks
+            docksHTML += '<tr bgcolor="#1a1a2e">';
+            docksHTML += '<th align="center" width="15%"><font size="5" color="#a5b4fc">DOCK</font></th>';
+            docksHTML += '<th align="left" width="35%"><font size="5" color="#a5b4fc">SHIPMENT</font></th>';
+            docksHTML += '<th align="left" width="30%"><font size="5" color="#a5b4fc">ทะเบียนรถ</font></th>';
+            docksHTML += '<th align="center" width="20%"><font size="5" color="#a5b4fc">สถานะ</font></th>';
+            docksHTML += '</tr>';
+            
+            for (var i = 0; i < docksList.length; i++) {
+                var dock = docksList[i];
+                var activeBooking = null;
+                
+                for(var b = 0; b < bookings.length; b++) {
+                    if(bookings[b].allocation === dock.name) {
+                        activeBooking = bookings[b];
+                        break;
+                    }
+                }
+                
+                var isBusy = (dock.status === 'Busy' || dock.status === 'Maintenance');
+                var bgColor = (i % 2 === 0) ? '#050505' : '#0a0a0a'; 
+                if (activeBooking) bgColor = '#1e1b4b';
+
+                docksHTML += '<tr bgcolor="' + bgColor + '">';
+                docksHTML += '<td align="center" valign="middle"><font size="5" color="#FFFFFF"><b>' + dock.name.replace('Dock ', 'D') + '</b></font></td>'; // ย่อชื่อ Dock นิดนึงให้พอดี
+
+                if (activeBooking) {
+                    var sName = statusMap[activeBooking.status] || activeBooking.status;
+                    var jobColor = (activeBooking.jobType === 'OUT') ? '#fb923c' : '#38bdf8';
+                    var sColor = (activeBooking.status === 'Arrived') ? '#34d399' : '#38bdf8';
+
+                    docksHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + activeBooking.shipmentNo + '</b></font><br><font size="3" color="' + jobColor + '">[' + (activeBooking.jobType || 'IN') + ']</font></td>';
+                    docksHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + activeBooking.license + '</b></font><br><font size="3" color="#aaaaaa">(' + (activeBooking.vehicle || '-') + ')</font></td>';
+                    docksHTML += '<td align="center" valign="middle"><font size="4" color="#000000"><b style="background-color: ' + sColor + '; padding: 5px 10px; border-radius: 5px;">' + sName + '</b></font></td>';
+                } else {
+                    docksHTML += '<td align="center" valign="middle" colspan="2"><font size="4" color="#444444"><i>ว่าง / ไม่มีรถเทียบท่า</i></font></td>';
+                    docksHTML += '<td align="center" valign="middle"><font size="4" color="' + (isBusy ? '#ef4444' : '#64748b') + '"><b>' + (isBusy ? 'CLOSED' : 'EMPTY') + '</b></font></td>';
+                }
+                docksHTML += '</tr>';
+            }
+            docksHTML += '</table><br><br><br>'; // เพิ่มที่ว่างด้านล่างเพื่อให้ Scroll สุดจอ
+            document.getElementById('docks-container').innerHTML = docksHTML;
+
+            // ================== ฝั่งซ้าย: Waitlist ==================
+            var waitlist = [];
+            for(var w = 0; w < bookings.length; w++) {
+                if(bookings[w].allocation === 'Waitlist') {
+                    waitlist.push(bookings[w]);
+                }
+            }
+            
+            document.getElementById('waitlist-title').innerHTML = 'WAITLIST (' + waitlist.length + ')';
+            
+            var wlHTML = '<table width="100%" border="1" cellpadding="15" cellspacing="0" bordercolor="#333333" style="border-collapse: collapse;">';
+            // หัวตาราง Waitlist
+            wlHTML += '<tr bgcolor="#332200">';
+            wlHTML += '<th align="center" width="15%"><font size="5" color="#fbbf24">คิว</font></th>';
+            wlHTML += '<th align="left" width="40%"><font size="5" color="#fbbf24">SHIPMENT</font></th>';
+            wlHTML += '<th align="left" width="30%"><font size="5" color="#fbbf24">ทะเบียนรถ</font></th>';
+            wlHTML += '<th align="center" width="15%"><font size="5" color="#fbbf24">PLAN</font></th>';
+            wlHTML += '</tr>';
+
+            if(waitlist.length === 0) {
+                wlHTML += '<tr><td colspan="4" align="center" bgcolor="#050505"><br><font size="5" color="#555555">ไม่มีคิวรอในระบบ</font><br><br></td></tr>';
+            } else {
+                for(var idx = 0; idx < waitlist.length; idx++) {
+                    var b = waitlist[idx];
+                    var wBgColor = (idx % 2 === 0) ? '#050505' : '#0a0a0a';
+                    var wJobColor = (b.jobType === 'OUT') ? '#fb923c' : '#38bdf8';
+                    
+                    wlHTML += '<tr bgcolor="' + wBgColor + '">';
+                    wlHTML += '<td align="center" valign="middle"><font size="5" color="#FFFFFF"><b>' + (idx + 1) + '</b></font></td>';
+                    wlHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + b.shipmentNo + '</b></font><br><font size="3" color="' + wJobColor + '">[' + (b.jobType || 'IN') + ']</font></td>';
+                    wlHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + b.license + '</b></font><br><font size="3" color="#aaaaaa">(' + (b.vehicle || '-') + ')</font></td>';
+                    wlHTML += '<td align="center" valign="middle"><font size="5" color="#fbbf24"><b>' + b.startTime + '</b></font></td>';
+                    wlHTML += '</tr>';
+                }
+            }
+            wlHTML += '</table><br><br><br>'; // เพิ่มที่ว่างด้านล่างเพื่อให้ Scroll สุดจอ
+            document.getElementById('tv-waitlist').innerHTML = wlHTML;
+        }
+
+        // Auto Scroll แยกกันอิสระ 2 ฝั่ง (ฝั่งไหนดันยาวกว่าก็เลื่อนฝั่งนั้น)
+        setInterval(function() {
+            var waitlistEl = document.getElementById('tv-waitlist');
+            var docksEl = document.getElementById('docks-container');
+
+            // Scroll ฝั่งซ้าย
+            if (waitlistEl && waitlistEl.scrollHeight > waitlistEl.clientHeight) {
+                waitlistEl.scrollTop += 1;
+                if (waitlistEl.scrollTop + waitlistEl.clientHeight >= waitlistEl.scrollHeight - 2) {
+                    setTimeout(function() { waitlistEl.scrollTop = 0; }, 3000); 
+                }
+            }
+            
+            // Scroll ฝั่งขวา
+            if (docksEl && docksEl.scrollHeight > docksEl.clientHeight) {
+                docksEl.scrollTop += 1;
+                if (docksEl.scrollTop + docksEl.clientHeight >= docksEl.scrollHeight - 2) {
+                    setTimeout(function() { docksEl.scrollTop = 0; }, 3000); 
+                }
+            }
+        }, 50);
+
+        // รีเฟรชอัตโนมัติ
+        setTimeout(function() { window.location.reload(); }, 2 * 60 * 60 * 1000);
+
+    </script>
+</body>
+</html>
