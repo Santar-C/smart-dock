@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Dock Management</title>
+    <title>Smart Dock & DAS (Pro Version)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -141,7 +141,7 @@
                 dockBusyTitle: "ไม่ว่าง (แจ้งปิดชั่วคราว)",
                 dockMaintTitle: "ปิดซ่อมบำรุง (Maintenance)",
                 clickToChange: "คลิกเปลี่ยนสถานะ",
-                scheduleTitle: "ตารางเวลาหน้าท่า (Schedule)",
+                scheduleTitle: "ตารางเวลาหน้าท่า (DAS Schedule)",
                 qrTitle: "ระบบป้ายประจำช่องจอด (QR Code สำหรับสแกน)",
                 qrSub: "จุดสแกนอัปเดตสถานะอัตโนมัติ",
                 btnPrint: "พิมพ์ป้าย (Print)",
@@ -175,7 +175,7 @@
                 }
             },
             en: {
-                appTitle: "Smart Dock Management",
+                appTitle: "Smart Dock Pro",
                 connecting: "Connecting...",
                 online: "Online",
                 tabDash: "Dashboard",
@@ -216,7 +216,7 @@
                 dockBusyTitle: "Busy (Temporarily Closed)",
                 dockMaintTitle: "Under Maintenance",
                 clickToChange: "Click to change status",
-                scheduleTitle: "Schedule Timeline",
+                scheduleTitle: "DAS Schedule Timeline",
                 qrTitle: "Dock QR Code Badges",
                 qrSub: "Scan point for auto-status update",
                 btnPrint: "Print Badges",
@@ -315,7 +315,7 @@
             date: getTodayStr(), startTime: '', endTime: '', shipmentNo: '', vendor: '', 
             packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', 
             jobType: 'IN', 
-            allocation: 'Waitlist'
+            allocation: 'Waitlist', targetDock: '' // Added targetDock field
           });
 
           // Role Permissions
@@ -372,13 +372,12 @@
                   const waitlistEl = document.getElementById('tv-waitlist');
                   if (!waitlistEl) return;
                   let scrollAmount = 0;
-                  const scrollStep = 1; // ความเร็วการเลื่อน
+                  const scrollStep = 1; 
                   const interval = setInterval(() => {
                       if (waitlistEl.scrollHeight > waitlistEl.clientHeight) {
                           waitlistEl.scrollTop += scrollStep;
-                          // ถ้าเลื่อนจนสุด ให้เด้งกลับไปบนสุด
                           if (Math.ceil(waitlistEl.scrollTop + waitlistEl.clientHeight) >= waitlistEl.scrollHeight) {
-                              setTimeout(() => { waitlistEl.scrollTop = 0; }, 2000); // พัก 2 วิแล้วเด้งกลับ
+                              setTimeout(() => { waitlistEl.scrollTop = 0; }, 2000); 
                           }
                       }
                   }, 40); 
@@ -428,7 +427,7 @@
                     { fps: 10, qrbox: { width: 250, height: 250 } },
                     (decodedText) => {
                         const now = Date.now();
-                        // ⏱️ ระบบ Cooldown 3.5 วินาที เพื่อป้องกันการยิงบาร์โค้ดเดิมซ้ำรัวๆ
+                        // ⏱️ ระบบ Cooldown 3.5 วินาที
                         if (lastScanRef.current.text === decodedText && (now - lastScanRef.current.time) < 3500) {
                             return; 
                         }
@@ -472,12 +471,10 @@
                             success = false;
                         }
                         
-                        // 🟢 แสดงข้อความแจ้งเตือน (แต่ไม่ปิดกล้อง)
                         setScanResult({ text: msg, isSuccess: success });
                         newBookings[index] = { ...booking, status: nextStatus };
                         syncBookingsData(newBookings);
                         
-                        // ⏱️ ตั้งเวลาเคลียร์ข้อความแจ้งเตือนใน 3 วินาที เพื่อให้กล้องโล่งพร้อมสแกนต่อ
                         setTimeout(() => {
                             setScanResult({ text: '', isSuccess: false });
                         }, 3000);
@@ -510,6 +507,11 @@
             }
 
             const newBookingData = { ...formData, status: formData.allocation === 'Waitlist' ? 'Pending' : 'Pending' };
+            // ถ้าไม่ได้เป็น Waitlist ให้เคลียร์ targetDock ทิ้ง
+            if (newBookingData.allocation !== 'Waitlist') {
+                newBookingData.targetDock = '';
+            }
+
             let newBookings;
             if (editingId) {
               newBookings = bookings.map(b => b.id === editingId ? { ...b, ...newBookingData } : b);
@@ -518,13 +520,13 @@
             }
             syncBookingsData(newBookings);
             setEditingId(null);
-            setFormData({ date: formData.date, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist' });
+            setFormData({ date: formData.date, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist', targetDock: '' });
             if (window.innerWidth < 768) setActiveTab('dashboard');
           };
 
           const handleEdit = (booking) => {
             if (!isPowerUser) return;
-            setFormData({ ...booking, jobType: booking.jobType || 'IN', vehicle: booking.vehicle || '4WT' }); 
+            setFormData({ ...booking, jobType: booking.jobType || 'IN', vehicle: booking.vehicle || '4WT', targetDock: booking.targetDock || '' }); 
             setEditingId(booking.id);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           };
@@ -707,9 +709,11 @@
                                           <div key={b.id} className="bg-slate-800/80 border border-slate-700 rounded-xl p-3 flex items-center tv-row">
                                               <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-lg font-black text-slate-300 mr-3 shrink-0">{idx + 1}</div>
                                               <div className="flex-1 min-w-0">
-                                                  <div className="text-lg 2xl:text-xl font-black text-white truncate flex items-center">
+                                                  <div className="text-lg 2xl:text-xl font-black text-white truncate flex items-center flex-wrap gap-1">
                                                       {b.shipmentNo}
-                                                      <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${b.jobType === 'OUT' ? 'bg-orange-500/20 text-orange-400' : 'bg-sky-500/20 text-sky-400'}`}>{b.jobType || 'IN'}</span>
+                                                      {/* แจ้ง Target Dock ในหน้าจอทีวี */}
+                                                      {b.targetDock && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-500/50">รอ {b.targetDock}</span>}
                                                   </div>
                                                   <div className="text-slate-400 text-sm 2xl:text-base truncate mt-0.5">
                                                       <span className="font-bold text-slate-200">{b.license}</span> ({b.vehicle})
@@ -916,9 +920,21 @@
                                             })}
                                         </select>
                                     </div>
+                                    
+                                    {/* 🎯 ส่วนที่เพิ่มเข้ามา: ระบุ Dock เป้าหมายสำหรับ Waitlist */}
+                                    {formData.allocation === 'Waitlist' && (
+                                        <div className="pt-2 pb-1 animate-fade-in">
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">🎯 ระบุช่องจอดที่รอ (Target Dock)</label>
+                                            <select name="targetDock" value={formData.targetDock || ''} onChange={handleInputChange} className="w-full border border-slate-200 rounded-xl p-2.5 outline-none bg-slate-50 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all">
+                                                <option value="">ไม่ระบุ (Any Dock)</option>
+                                                {docksList.map(d => <option key={`target-${d.name}`} value={d.name}>{d.name}</option>)}
+                                            </select>
+                                        </div>
+                                    )}
+
                                     <div className="pt-4 mt-2 border-t border-slate-100">
                                         <button type="submit" className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold text-sm transition-all transform hover:-translate-y-0.5">{editingId ? t('btnSaveEdit') : t('btnSaveAdd')}</button>
-                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: viewDate, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
+                                        {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({ date: viewDate, startTime: '', endTime: '', shipmentNo: '', vendor: '', packageType: 'พาเลท', qty: '', license: '', vehicle: '4WT', jobType: 'IN', allocation: 'Waitlist', targetDock: '' })}} className="w-full py-2.5 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors">{t('btnCancel')}</button>}
                                     </div>
                                 </form>
                             </div>
@@ -956,9 +972,11 @@
                                                             <button onClick={() => handleEdit(booking)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 shadow-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
                                                         </div>
                                                     )}
-                                                    <div className="font-bold text-slate-800 text-sm flex items-center">
+                                                    <div className="font-bold text-slate-800 text-sm flex items-center flex-wrap gap-1">
                                                         {booking.license} 
-                                                        <span className="ml-2 bg-slate-100 border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">{booking.vehicle}</span>
+                                                        <span className="bg-slate-100 border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">{booking.vehicle}</span>
+                                                        {/* แจ้ง Target Dock ในหน้าแอดมิน */}
+                                                        {booking.targetDock && <span className="bg-indigo-100 border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold">รอ {booking.targetDock}</span>}
                                                     </div>
                                                     <div>{booking.shipmentNo} <span className="text-slate-400">|</span> {booking.vendor}</div>
                                                     <div className="font-semibold text-indigo-600 bg-indigo-50 inline-block px-2 py-0.5 rounded">{booking.startTime} - {booking.endTime}</div>
@@ -1250,7 +1268,10 @@
                                                                 <td className="p-4 font-bold text-slate-800">{b.shipmentNo} <div className="text-[10px] text-slate-400 font-normal">{b.vendor}</div></td>
                                                                 <td className="p-4"><InOutBadge type={b.jobType} /></td>
                                                                 <td className="p-4 font-bold text-slate-600">{b.license} <span className="font-normal text-slate-400 border px-1 rounded ml-1 text-[10px]">{b.vehicle}</span></td>
-                                                                <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
+                                                                <td className="p-4 font-bold text-indigo-600">
+                                                                    {b.allocation}
+                                                                    {b.allocation === 'Waitlist' && b.targetDock ? <div className="text-[10px] text-indigo-400 mt-0.5">รอ {b.targetDock}</div> : null}
+                                                                </td>
                                                                 <td className="p-4 font-bold text-blue-600 bg-blue-50/30">{b.startTime}</td>
                                                                 <td className="p-4 font-medium text-slate-700">{b.timeArrived || '-'}</td>
                                                                 <td className="p-4 font-medium text-slate-700">{b.timeLoading || '-'}</td>
@@ -1267,7 +1288,10 @@
                                                                 <td className="p-4"><div className="font-bold text-slate-800">{b.shipmentNo}</div><div className="text-xs text-slate-500">{b.vendor}</div></td>
                                                                 <td className="p-4"><InOutBadge type={b.jobType} /></td>
                                                                 <td className="p-4 font-bold text-slate-700">{b.license} <div className="text-[10px] text-slate-400 font-normal mt-1"><span className="border px-1 py-0.5 rounded bg-slate-50">{b.vehicle}</span></div></td>
-                                                                <td className="p-4 font-bold text-indigo-600">{b.allocation}</td>
+                                                                <td className="p-4 font-bold text-indigo-600">
+                                                                    {b.allocation}
+                                                                    {b.allocation === 'Waitlist' && b.targetDock ? <div className="text-[10px] text-indigo-400 mt-0.5">รอ {b.targetDock}</div> : null}
+                                                                </td>
                                                                 <td className="p-4"><StatusBadge booking={b} /></td>
                                                                 <td className="p-4 text-center">
                                                                     <div className="flex justify-center space-x-2">
