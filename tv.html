@@ -32,7 +32,7 @@
             <!-- ================= ฝั่งซ้าย: WAITLIST ================= -->
             <td width="45%" valign="top" style="border-right: 3px solid #333333; padding: 15px;">
                 <!-- หัวข้อ Waitlist -->
-                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#332200" style="border: 2px solid #fbbf24; margin-bottom: 10px;">
+                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#332200" style="border: 2px solid #fbbf24; margin-bottom: 10px; border-radius: 8px;">
                     <tr><td align="center"><font size="5" color="#fbbf24"><b id="waitlist-title">WAITLIST (0)</b></font></td></tr>
                 </table>
 
@@ -45,8 +45,8 @@
             <!-- ================= ฝั่งขวา: LIVE DOCK BOARD ================= -->
             <td width="55%" valign="top" style="padding: 15px;">
                 <!-- หัวข้อ Live Dock -->
-                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#1a1a2e" style="border: 2px solid #4f46e5; margin-bottom: 10px;">
-                    <tr><td align="center"><font size="5" color="#a5b4fc"><b>LIVE DOCK BOARD (สถานะหน้าท่า 1-9)</b></font></td></tr>
+                <table width="100%" border="0" cellpadding="10" cellspacing="0" bgcolor="#1a1a2e" style="border: 2px solid #4f46e5; margin-bottom: 10px; border-radius: 8px;">
+                    <tr><td align="center"><font size="5" color="#a5b4fc"><b>LIVE DOCK BOARD (สถานะหน้าท่า)</b></font></td></tr>
                 </table>
 
                 <!-- คอนเทนเนอร์แสดงช่องจอด (Scroll อัตโนมัติ) -->
@@ -71,7 +71,9 @@
             databaseURL: "https://cevaraposdm-16427-default-rtdb.asia-southeast1.firebasedatabase.app"
         };
 
-        firebase.initializeApp(firebaseConfig);
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
         var db = firebase.database();
 
         // Data States
@@ -126,6 +128,7 @@
                 var data = snapshot.val();
                 bookings = [];
                 for(var k = 0; k < data.length; k++) {
+                    // กรองเฉพาะงานของวันนี้และยังไม่ Completed
                     if(data[k] !== null && data[k].status !== 'Completed' && data[k].date === targetDate) {
                         bookings.push(data[k]);
                     }
@@ -164,7 +167,7 @@
                 if (activeBooking) bgColor = '#1e1b4b';
 
                 docksHTML += '<tr bgcolor="' + bgColor + '">';
-                docksHTML += '<td align="center" valign="middle"><font size="5" color="#FFFFFF"><b>' + dock.name.replace('Dock ', 'D') + '</b></font></td>'; // ย่อชื่อ Dock นิดนึงให้พอดี
+                docksHTML += '<td align="center" valign="middle"><font size="5" color="#FFFFFF"><b>' + dock.name.replace('Dock ', 'D') + '</b></font></td>'; // ย่อชื่อ Dock
 
                 if (activeBooking) {
                     var sName = statusMap[activeBooking.status] || activeBooking.status;
@@ -180,7 +183,7 @@
                 }
                 docksHTML += '</tr>';
             }
-            docksHTML += '</table><br><br><br>'; // เพิ่มที่ว่างด้านล่างเพื่อให้ Scroll สุดจอ
+            docksHTML += '</table><br><br><br>'; 
             document.getElementById('docks-container').innerHTML = docksHTML;
 
             // ================== ฝั่งซ้าย: Waitlist ==================
@@ -210,15 +213,18 @@
                     var wBgColor = (idx % 2 === 0) ? '#050505' : '#0a0a0a';
                     var wJobColor = (b.jobType === 'OUT') ? '#fb923c' : '#38bdf8';
                     
+                    // 🎯 เช็คว่ามีการระบุช่องจอดที่รอ (Target Dock) ไหม ถ้ามีให้แสดงผล
+                    var targetDockHtml = b.targetDock ? ' &nbsp;<font size="4" color="#a5b4fc"><b>[รอ ' + b.targetDock + ']</b></font>' : '';
+                    
                     wlHTML += '<tr bgcolor="' + wBgColor + '">';
                     wlHTML += '<td align="center" valign="middle"><font size="5" color="#FFFFFF"><b>' + (idx + 1) + '</b></font></td>';
-                    wlHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + b.shipmentNo + '</b></font><br><font size="3" color="' + wJobColor + '">[' + (b.jobType || 'IN') + ']</font></td>';
+                    wlHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + b.shipmentNo + '</b></font><br><font size="3" color="' + wJobColor + '">[' + (b.jobType || 'IN') + ']</font>' + targetDockHtml + '</td>';
                     wlHTML += '<td align="left" valign="middle"><font size="5" color="#FFFFFF"><b>' + b.license + '</b></font><br><font size="3" color="#aaaaaa">(' + (b.vehicle || '-') + ')</font></td>';
                     wlHTML += '<td align="center" valign="middle"><font size="5" color="#fbbf24"><b>' + b.startTime + '</b></font></td>';
                     wlHTML += '</tr>';
                 }
             }
-            wlHTML += '</table><br><br><br>'; // เพิ่มที่ว่างด้านล่างเพื่อให้ Scroll สุดจอ
+            wlHTML += '</table><br><br><br>'; 
             document.getElementById('tv-waitlist').innerHTML = wlHTML;
         }
 
@@ -244,7 +250,7 @@
             }
         }, 50);
 
-        // รีเฟรชอัตโนมัติ
+        // รีเฟรชอัตโนมัติ ทุกๆ 2 ชั่วโมง ป้องกันทีวีค้าง
         setTimeout(function() { window.location.reload(); }, 2 * 60 * 60 * 1000);
 
     </script>
